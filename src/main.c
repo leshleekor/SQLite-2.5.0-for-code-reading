@@ -20,18 +20,15 @@
 #include "os.h"
 #include <ctype.h>
 
-/*
-** This is the callback routine for the code that initializes the
-** database.  See sqliteInit() below for additional information.
-**
-** Each callback contains the following information:
-**
-**     argv[0] = "file-format" or "schema-cookie" or "table" or "index"
-**     argv[1] = table or index name or meta statement type.
-**     argv[2] = root page number for table or index.  NULL for meta.
-**     argv[3] = SQL create statement for the table or index
-**
-*/
+// 데이터베이스 초기화 시, sqliteInit() 내부에서 VDBE 바이트코드가 실행될 때 호출되는 콜백 함수입니다.
+// argv 매개변수에는 "file-format", "cache-size", "schema_cookie", "table", "index", "view" 등의 정보가 들어올 수 있으며, 이를 바탕으로 **SQLite 구조체(db)**를 세팅합니다.
+// 매개변수:
+// pDb: 콜백 호출 시 전달된 SQLite 구조체 포인터(타입 변환 필요).
+// argc, argv: SQL 결과의 열 개수와 실제 값들(4개로 고정).
+// argv[0]: meta 정보("file-format", "schema-cookie", "table", "index" 등)
+// argv[1]: 테이블/인덱스/뷰 이름 등
+// argv[2]: 루트 페이지 번호
+// argv[3]: CREATE 구문(SQL 문자열) 또는 기타 값
 int sqliteInitCallback(void *pDb, int argc, char **argv, char **azColName){
   sqlite *db = (sqlite*)pDb;
   Parse sParse;
@@ -43,6 +40,7 @@ int sqliteInitCallback(void *pDb, int argc, char **argv, char **azColName){
 
   assert( argc==4 );
   switch( argv[0][0] ){
+    // 'c': "cache-size" → 페이지 캐시 크기를 db->cache_size에 세팅, B-트리에 적용
     case 'c': {  /* Recommended pager cache size */
       int size = atoi(argv[3]);
       if( size==0 ){ size = MAX_PAGES; }
@@ -50,18 +48,22 @@ int sqliteInitCallback(void *pDb, int argc, char **argv, char **azColName){
       sqliteBtreeSetCacheSize(db->pBe, size);
       break;
     }
+    // 'f': "file-format" → db->file_format 업데이트
     case 'f': {  /* File format */
       db->file_format = atoi(argv[3]);
       break;
     }
+    // 's': "schema-cookie" → DB 스키마 쿠키(db->schema_cookie) 업데이트
     case 's': { /* Schema cookie */
       db->schema_cookie = atoi(argv[3]);
       db->next_cookie = db->schema_cookie;
       break;
     }
+    // 'v', 'i', 't': CREATE TABLE/INDEX/VIEW
     case 'v':
     case 'i':
     case 't': {  /* CREATE TABLE, CREATE INDEX, or CREATE VIEW statements */
+      // argv[3]가 존재하면 → SQL 파서를 호출(sqliteRunParser)해 내부 구조(테이블/인덱스/뷰) 생성
       if( argv[3] && argv[3][0] ){
         /* Call the parser to process a CREATE TABLE, INDEX or VIEW.
         ** But because sParse.initFlag is set to 1, no VDBE code is generated
@@ -88,7 +90,7 @@ int sqliteInitCallback(void *pDb, int argc, char **argv, char **azColName){
           ** safely ignore the index on the permanent table.
           */
           /* Do Nothing */;
-        }else{
+        }else{ // argv[3]가 비어 있으면 → 자동 생성된 인덱스로 보고, 이미 존재하는 인덱스의 tnum(루트 페이지 번호)만 기록
           pIndex->tnum = atoi(argv[2]);
         }
       }
@@ -103,18 +105,8 @@ int sqliteInitCallback(void *pDb, int argc, char **argv, char **azColName){
   return nErr;
 }
 
-/*
-** Attempt to read the database schema and initialize internal
-** data structures.  Return one of the SQLITE_ error codes to
-** indicate success or failure.
-**
-** After the database is initialized, the SQLITE_Initialized
-** bit is set in the flags field of the sqlite structure.  An
-** attempt is made to initialize the database as soon as it
-** is opened.  If that fails (perhaps because another process
-** has the sqlite_master table locked) than another attempt
-** is made the first time the database is accessed.
-*/
+// DB가 처음 열릴 때나 스키마를 다시 읽어야 할 때, sqlite_master 테이블을 읽어 내부 구조체(테이블/인덱스/뷰)들을 설정하는 함수.
+// 내부적으로 가상 머신(VDBE)을 만들어 initProg라는 초기화 바이트코드를 실행하고, 각 레코드를 sqliteInitCallback으로 전달합니다.
 static int sqliteInit(sqlite *db, char **pzErrMsg){
   Vdbe *vdbe;
   int rc;
